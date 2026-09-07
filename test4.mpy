@@ -1,0 +1,8 @@
+from machine import Pin
+from utime import sleep_ms
+
+sen = Pin(13,Pin.IN)
+
+while True:
+    print(sen.value())
+    sleep_ms(200)

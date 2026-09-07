@@ -1,0 +1,10 @@
+# this program is for esp32
+from machine import Pin,I2C
+import sys
+sda_pin=Pin(21)
+sclk_pin=Pin(22)
+i2c=I2C(sda=sda_pin,scl=sclk_pin)
+x=i2c.scan()
+# print(hex(x[0]))
+print(bool(i2c.scan()))
+sys.exit()
