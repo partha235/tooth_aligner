@@ -1,0 +1,11 @@
+from machine import Pin
+from utime import sleep_ms
+import sys 
+
+rx=Pin(13,Pin.IN)
+
+print(sys.version)
+sys.exit()
+# while True:
+#     print(rx.value())
+#     sleep_ms(100)

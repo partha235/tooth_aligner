@@ -2,10 +2,16 @@
 from machine import Pin,ADC
 from utime import sleep_ms
 
-sen=ADC(Pin(25))  # baurdrate 115200 which is predefined for micropython.
-sen.atten(ADC.ATTN_11DB) # for 3.3v as full range.
-sen.width(ADC.WIDTH_12BIT)
+# sen=ADC(Pin(25))  # baurdrate 115200 which is predefined for micropython.
+# sen.atten(ADC.ATTN_11DB) # for 3.3v as full range.
+# sen.width(ADC.WIDTH_12BIT)
+# while True:
+#     x=sen.read()
+#     print(x)
+#     sleep_ms(100)
+
+buz = Pin(4,Pin.OUT)
+
 while True:
-    x=sen.read()
-    print(x)
-    sleep_ms(100)
+    buz.value(not buz.value())
+    sleep_ms(500)

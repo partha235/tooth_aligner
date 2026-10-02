@@ -1,0 +1,95 @@
+# this program is to receive data from esp8266. 
+import network
+import socket
+import time
+
+# =====================================================
+# WIFI ACCESS POINT
+# =====================================================
+
+SSID = "aligner_box"
+PASSWORD = "123456789"
+
+ap = network.WLAN(network.AP_IF)
+ap.active(True)
+
+ap.config(
+    essid=SSID,
+    password=PASSWORD,
+    authmode=network.AUTH_WPA_WPA2_PSK
+)
+
+# Wait for AP
+while not ap.active():
+    time.sleep(1)
+
+print()
+print("==============================")
+print("ALIGNER BOX - ESP32 RECEIVER")
+print("==============================")
+
+print("WiFi AP started")
+print("SSID:", SSID)
+print("IP:", ap.ifconfig()[0])
+
+# =====================================================
+# TCP SERVER
+# =====================================================
+
+SERVER_IP = "0.0.0.0"
+SERVER_PORT = 5000
+
+server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+
+server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+server.bind((SERVER_IP, SERVER_PORT))
+server.listen(1)
+
+print("TCP server started")
+print("Listening on port:", SERVER_PORT)
+print()
+print("Waiting for ESP-01...")
+print("==============================")
+
+# =====================================================
+# MAIN LOOP
+# =====================================================
+
+while True:
+
+    try:
+
+        client, address = server.accept()
+
+        print()
+        print("ESP-01 CONNECTED")
+        print("Client address:", address)
+
+        data = client.recv(100)
+
+        if data:
+
+            message = data.decode().strip()
+
+            print("Received:", message)
+
+            if message == "PRESSED":
+                print(">>> SWITCH PRESSED")
+
+            elif message == "RELEASED":
+                print(">>> SWITCH RELEASED")
+
+            else:
+                print(">>> UNKNOWN DATA")
+
+        client.close()
+
+        print("Connection closed")
+        print("------------------------------")
+
+    except Exception as e:
+
+        print("ERROR:", e)
+
+        time.sleep(1)

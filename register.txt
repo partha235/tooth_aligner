@@ -1,0 +1,4 @@
+Patient Name: bps
+Patient ID : 26abc02
+mobile: +91 xxxxxxxxxx
+

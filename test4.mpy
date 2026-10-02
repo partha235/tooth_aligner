@@ -1,8 +1,30 @@
-from machine import Pin
-from utime import sleep_ms
+# to set time and date
 
-sen = Pin(13,Pin.IN)
+from machine import Pin, I2C
 
-while True:
-    print(sen.value())
-    sleep_ms(200)
+i2c = I2C(
+    0,
+    scl=Pin(22),
+    sda=Pin(21),
+    freq=100000
+)
+
+RTC_ADDR = 0x68
+
+def dec_to_bcd(val):
+    return (val // 10) << 4 | (val % 10)
+
+# Set: second, minute, hour, weekday, day, month, year
+data = bytes([
+    dec_to_bcd(0),     # seconds
+    dec_to_bcd(33),    # minutes
+    dec_to_bcd(20),    # hour (24-hour format)
+    dec_to_bcd(3),     # weekday: Wednesday
+    dec_to_bcd(16),    # day
+    dec_to_bcd(9),     # month
+    dec_to_bcd(26)     # year = 2026
+])
+
+i2c.writeto_mem(RTC_ADDR, 0x00, data)
+
+print("RTC date/time set.")
