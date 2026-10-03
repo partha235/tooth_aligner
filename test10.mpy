@@ -1,0 +1,684 @@
+from machine import Pin, ADC, I2C
+import network
+import socket
+import time
+
+# LED
+led = Pin(2, Pin.OUT)
+led.value(0)
+
+# BUZZER
+buzzer = Pin(4, Pin.OUT)
+buzzer.value(0)
+
+
+# QRE1113 - BOX SENSOR
+adc = ADC(Pin(32))
+adc.atten(ADC.ATTN_11DB)
+adc.width(ADC.WIDTH_12BIT)
+
+THRESHOLD = 200
+
+
+# ALERT TIMES
+# TEST VALUES
+ALERT_30_MIN = 30
+ALERT_1_HOUR = 60
+
+# FINAL VALUES:
+# ALERT_30_MIN = 30 * 60
+# ALERT_1_HOUR = 60 * 60
+
+
+# TIMER VARIABLES
+
+not_worn_start = None
+
+alert_30_triggered = False
+alert_1_triggered = False
+
+
+# ESP-01 Wi-Fi ACCESS POINT
+
+SSID = "aligner_box"
+PASSWORD = "123456789"
+
+ap = network.WLAN(network.AP_IF)
+
+ap.active(True)
+
+ap.config(
+    essid=SSID,
+    password=PASSWORD,
+    authmode=network.AUTH_WPA_WPA2_PSK
+)
+
+while not ap.active():
+    time.sleep_ms(100)
+
+print()
+print("==============================")
+print("      ALIGNER BOX")
+print("==============================")
+
+print("Wi-Fi AP started")
+print("SSID:", SSID)
+print("IP:", ap.ifconfig()[0])
+
+
+# TCP SERVER
+
+SERVER_IP = "0.0.0.0"
+SERVER_PORT = 5000
+
+server = socket.socket(
+    socket.AF_INET,
+    socket.SOCK_STREAM
+)
+
+server.setsockopt(
+    socket.SOL_SOCKET,
+    socket.SO_REUSEADDR,
+    1
+)
+
+server.bind(
+    (SERVER_IP, SERVER_PORT)
+)
+
+server.listen(1)
+
+# IMPORTANT:
+# Don't block forever waiting for ESP-01.
+server.settimeout(0.2)
+
+print("TCP server started")
+print("Port:", SERVER_PORT)
+print("Waiting for ESP-01...")
+
+# ESP-01 STATE
+
+esp_state = "UNKNOWN"
+
+last_esp_message = None
+last_esp_time = 0
+
+ESP_TIMEOUT = 10
+
+
+# DS3231
+
+i2c = I2C(
+    0,
+    scl=Pin(22),
+    sda=Pin(21),
+    freq=100000
+)
+
+RTC_ADDR = 0x68
+
+# BCD
+
+def bcd_to_dec(value):
+
+    return (value >> 4) * 10 + (value & 0x0F)
+
+# RTC
+
+def get_datetime():
+
+    data = i2c.readfrom_mem(
+        RTC_ADDR,
+        0x00,
+        7
+    )
+
+    second = bcd_to_dec(data[0] & 0x7F)
+    minute = bcd_to_dec(data[1])
+    hour = bcd_to_dec(data[2] & 0x3F)
+
+    day = bcd_to_dec(data[4])
+    month = bcd_to_dec(data[5] & 0x1F)
+
+    year = 2000 + bcd_to_dec(data[6])
+
+    return (
+        year,
+        month,
+        day,
+        hour,
+        minute,
+        second
+    )
+
+# DATETIME -> SECONDS
+
+def datetime_to_seconds(dt):
+
+    year, month, day, hour, minute, second = dt
+
+    days = 0
+
+    # Previous years
+
+    for y in range(2000, year):
+
+        if (
+            y % 4 == 0
+            and y % 100 != 0
+        ) or (
+            y % 400 == 0
+        ):
+
+            days += 366
+
+        else:
+
+            days += 365
+
+
+    # Previous months
+
+    month_days = [
+        31, 28, 31, 30, 31, 30,
+        31, 31, 30, 31, 30, 31
+    ]
+
+    for m in range(1, month):
+
+        days += month_days[m - 1]
+
+        if m == 2:
+
+            if (
+                year % 4 == 0
+                and year % 100 != 0
+            ) or (
+                year % 400 == 0
+            ):
+
+                days += 1
+
+
+    days += day - 1
+
+    total = days * 86400
+
+    total += hour * 3600
+    total += minute * 60
+    total += second
+
+    return total
+
+# LOG FILE
+
+LOG_FILE = "events.txt"
+
+
+def create_log():
+
+    try:
+
+        with open(LOG_FILE, "r"):
+            pass
+
+    except OSError:
+
+        with open(LOG_FILE, "w") as f:
+
+            f.write(
+                "DATE,TIME,EVENT\n"
+            )
+
+
+# LOG EVENT
+
+def log_event(event):
+
+    try:
+
+        (
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second
+        ) = get_datetime()
+
+        line = (
+            "{:04d}-{:02d}-{:02d},"
+            "{:02d}:{:02d}:{:02d},{}\n"
+        ).format(
+            year,
+            month,
+            day,
+            hour,
+            minute,
+            second,
+            event
+        )
+
+        with open(LOG_FILE, "a") as f:
+
+            f.write(line)
+
+        print(
+            "LOG:",
+            line,
+            end=""
+        )
+
+    except Exception as e:
+
+        print(
+            "LOG ERROR:",
+            e
+        )
+
+
+# QRE1113 SENSOR
+
+def read_sensor():
+
+    total = 0
+
+    for _ in range(10):
+
+        total += adc.read()
+
+        time.sleep_ms(5)
+
+    return total // 10
+
+
+# BUZZER - 30 MIN
+
+def buzzer_30min():
+
+    print()
+    print("==============================")
+    print("       30 MIN ALERT")
+    print("==============================")
+
+    # Short beep pattern
+
+    for _ in range(2):
+
+        buzzer.value(1)
+        time.sleep_ms(200)
+
+        buzzer.value(0)
+        time.sleep_ms(200)
+
+
+# BUZZER - 1 HOUR
+
+def buzzer_1hour():
+
+    print()
+    print("==============================")
+    print("       1 HOUR ALERT")
+    print("==============================")
+
+    # Longer/different pattern
+
+    for _ in range(3):
+
+        buzzer.value(1)
+        time.sleep_ms(500)
+
+        buzzer.value(0)
+        time.sleep_ms(300)
+
+
+# CREATE LOG
+
+create_log()
+
+
+# INITIAL QRE STATE
+
+sensor = read_sensor()
+
+if sensor < THRESHOLD:
+
+    box_state = "IN_BOX"
+
+else:
+
+    box_state = "OUT_OF_BOX"
+
+
+print()
+print("Initial ADC   :", sensor)
+print("Initial box   :", box_state)
+
+
+# MAIN LOOP
+
+while True:
+
+    # ========================================================
+    # LED HEARTBEAT
+    # ========================================================
+
+    led.value(
+        not led.value()
+    )
+
+
+    # ========================================================
+    # RECEIVE ESP-01 DATA
+    # ========================================================
+
+    try:
+
+        client, address = server.accept()
+
+        print()
+        print(
+            "ESP-01 CONNECTED:",
+            address
+        )
+
+        data = client.recv(100)
+
+        if data:
+
+            message = data.decode().strip()
+
+            print(
+                "ESP-01:",
+                message
+            )
+
+            # ------------------------------------------------
+            # VALID MESSAGE
+            # ------------------------------------------------
+
+            if (
+                message == "PRESSED"
+                or
+                message == "RELEASED"
+            ):
+
+                # Only print state change
+
+                if message != last_esp_message:
+
+                    print(
+                        "ESP STATE:",
+                        last_esp_message,
+                        "->",
+                        message
+                    )
+
+                    last_esp_message = message
+
+
+                esp_state = message
+
+                last_esp_time = time.time()
+
+
+        client.close()
+
+
+    except OSError:
+
+        # No ESP-01 connection right now.
+        # This is normal because the ESP-01
+        # connects once every second.
+
+        pass
+
+    # ========================================================
+    # READ BOX QRE1113
+    # ========================================================
+
+    sensor = read_sensor()
+
+    # ========================================================
+    # BOX SENSOR STATE
+    # ========================================================
+
+    new_box_state = box_state
+
+    if sensor < THRESHOLD:
+
+        new_box_state = "IN_BOX"
+
+    else:
+
+        new_box_state = "OUT_OF_BOX"
+
+
+    # ========================================================
+    # BOX STATE CHANGED
+    # ========================================================
+
+    if new_box_state != box_state:
+
+        print()
+        print(
+            "BOX STATE:",
+            box_state,
+            "->",
+            new_box_state
+        )
+
+        box_state = new_box_state
+
+        # ----------------------------------------------------
+        # ALIGNER ENTERED BOX
+        # ----------------------------------------------------
+
+        if box_state == "IN_BOX":
+
+            not_worn_start = None
+
+            alert_30_triggered = False
+            alert_1_triggered = False
+
+            buzzer.value(0)
+
+            log_event(
+                "ALIGNER_IN_BOX"
+            )
+
+        # ----------------------------------------------------
+        # ALIGNER REMOVED FROM BOX
+        # ----------------------------------------------------
+
+        else:
+
+            buzzer.value(0)
+
+            # If ESP-01 says worn,
+            # then aligner is probably being worn.
+
+            if esp_state == "PRESSED":
+
+                log_event(
+                    "ALIGNER_WORN"
+                )
+
+                not_worn_start = None
+
+                alert_30_triggered = False
+                alert_1_triggered = False
+
+            else:
+
+                log_event(
+                    "ALIGNER_OUT_OF_BOX"
+                )
+
+                # Start timer because aligner
+                # is outside box and not worn.
+
+                not_worn_start = datetime_to_seconds(
+                    get_datetime()
+                )
+
+                alert_30_triggered = False
+                alert_1_triggered = False
+
+                print(
+                    "NOT-WORN TIMER STARTED"
+                )
+
+    # ========================================================
+    # ESP-01 STATE CHANGE
+    # ========================================================
+
+    if esp_state == "PRESSED":
+
+        # Aligner is worn
+
+        if not_worn_start is not None:
+
+            print(
+                "Aligner worn."
+            )
+
+            log_event(
+                "ALIGNER_WORN"
+            )
+
+            not_worn_start = None
+
+            alert_30_triggered = False
+            alert_1_triggered = False
+
+            buzzer.value(0)
+
+    elif esp_state == "RELEASED":
+
+        # Only start timer when aligner is
+        # physically outside the box.
+
+        if (
+            box_state == "OUT_OF_BOX"
+            and
+            not_worn_start is None
+        ):
+
+            print(
+                "Aligner not worn."
+            )
+
+            log_event(
+                "ALIGNER_NOT_WORN"
+            )
+
+            not_worn_start = datetime_to_seconds(
+                get_datetime()
+            )
+
+            alert_30_triggered = False
+            alert_1_triggered = False
+
+    # ========================================================
+    # NOT-WORN TIMER
+    # ========================================================
+
+    if (
+        not_worn_start is not None
+        and
+        box_state == "OUT_OF_BOX"
+    ):
+
+        now = datetime_to_seconds(
+            get_datetime()
+        )
+
+        elapsed = now - not_worn_start
+
+        print(
+            "NOT WORN:",
+            elapsed,
+            "seconds"
+        )
+
+        # ----------------------------------------------------
+        # 30 MIN ALERT
+        # ----------------------------------------------------
+
+        if (
+            elapsed >= ALERT_30_MIN
+            and
+            not alert_30_triggered
+        ):
+
+            buzzer_30min()
+
+            log_event(
+                "ALERT_30MIN"
+            )
+
+            alert_30_triggered = True
+
+        # ----------------------------------------------------
+        # 1 HOUR ALERT
+        # ----------------------------------------------------
+
+        if (
+            elapsed >= ALERT_1_HOUR
+            and
+            not alert_1_triggered
+        ):
+
+            buzzer_1hour()
+
+            log_event(
+                "ALERT_1HR"
+            )
+
+            alert_1_triggered = True
+
+    # ========================================================
+    # ESP-01 COMMUNICATION TIMEOUT
+    # ========================================================
+
+    if last_esp_time != 0:
+
+        if (
+            time.time() - last_esp_time
+            > ESP_TIMEOUT
+        ):
+
+            if esp_state != "UNKNOWN":
+
+                print()
+                print(
+                    "WARNING: ESP-01 communication timeout"
+                )
+
+                log_event(
+                    "ESP01_COMMUNICATION_TIMEOUT"
+                )
+
+                esp_state = "UNKNOWN"
+
+                last_esp_message = None
+
+    # ========================================================
+    # DEBUG
+    # ========================================================
+
+    print(
+        "ADC:",
+        sensor,
+        "| BOX:",
+        box_state,
+        "| ESP:",
+        esp_state
+    )
+
+    # ========================================================
+    # LOOP DELAY
+    # ========================================================
+
+    time.sleep_ms(500)
